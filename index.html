@@ -3,6 +3,11 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="description" content="香港迪士尼樂園各設施即時排隊等候時間，互動地圖 + 等候清單 + 園區繁忙度分析，每5分鐘自動更新。">
+<meta property="og:title" content="香港迪士尼樂園 即時等候時間">
+<meta property="og:description" content="即時排隊等候時間 + 互動地圖 + 園區繁忙度分析">
+<meta property="og:url" content="https://disneyland.we1co.me/">
+<meta property="og:type" content="website">
 <title>香港迪士尼樂園 即時等候時間 | HK Disneyland Wait Times</title>
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
@@ -54,8 +59,9 @@
   .badge.OTHER{background:#1e293b;color:#94a3b8}
   .section-title{font-size:.72rem;color:var(--sub);font-weight:600;padding:8px 0 6px;text-transform:uppercase;letter-spacing:.04em}
   .empty{text-align:center;color:var(--sub);padding:40px 0;font-size:.85rem}
-  .tab-bar{position:fixed;bottom:0;left:0;right:0;display:flex;background:var(--card);border-top:1px solid var(--border);z-index:2}
+  .tab-bar{position:fixed;bottom:0;left:0;right:0;display:flex;background:var(--card);border-top:1px solid var(--border);z-index:2;padding-bottom:env(safe-area-inset-bottom,0px)}
   .tab-bar button{flex:1;padding:10px 0;background:none;border:none;color:var(--sub);font-size:.7rem;cursor:pointer}
+  .tab-bar button:focus-visible,.filter-bar button:focus-visible,.refresh:focus-visible,.locate-btn:focus-visible{outline:2px solid var(--blue);outline-offset:2px}
   .tab-bar button.on{color:var(--blue)}
   .tab-bar button svg{display:block;margin:0 auto 2px;width:20px;height:20px;fill:currentColor}
   .locate-btn{position:absolute;right:10px;bottom:120px;z-index:1000;width:34px;height:34px;border-radius:8px;background:var(--card);border:1px solid var(--border);color:#3b82f6;display:flex;align-items:center;justify-content:center;cursor:pointer;font-size:16px;box-shadow:0 2px 6px rgba(0,0,0,.4)}
@@ -63,7 +69,6 @@
   .locate-btn.locating{color:var(--amber)}
   .hidden{display:none!important}
   @media(min-width:700px){#map{flex:0 0 60vh}.list{columns:2;column-gap:10px} .item{break-inside:avoid}}
-  .tab-bar{position:fixed;bottom:0;left:0;right:0;display:flex;background:var(--card);border-top:1px solid var(--border);z-index:2}
 </style>
 </head>
 <body>
@@ -113,14 +118,6 @@ function fmtTime(iso){
   const m=iso.match(/T(\d{2}):(\d{2})/);
   return m?m[1]+':'+m[2]:'';
 }
-function countdown(iso){
-  if(!iso)return'';
-  const t=new Date(iso).now();
-  const diff=Math.max(0,(new Date(iso)-new Date())/60000);
-  if(diff<=0)return'已閉園';
-  return`> ${Math.floor(diff)}m`;
-}
-
 // trend sparkline SVG — compact for mobile
 function sparkSVG(samples){
   // samples = [{t:'HH:MM', data:{rideId:wait}}]
@@ -139,7 +136,7 @@ function sparkSVG(samples){
     if(v===null)return null;
     return(i*W/(avgs.length-1))+','+(H - (v/max)*H);
   }).filter(Boolean);
-  return`<svg viewBox="0 0 ${W} ${H}" xmlns="http://www.w3.org/2000/svg">
+  return`<svg viewBox="0 0 ${W} ${H}" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
     <polyline points="${pts.join(' ')}" fill="none" stroke="#3b82f6" stroke-width="1.5" stroke-linejoin="round"/>
     <circle cx="${pts[pts.length-1].split(',')[0]}" cy="${pts[pts.length-1].split(',')[1]}" r="2" fill="#3b82f6"/>
   </svg>`;
