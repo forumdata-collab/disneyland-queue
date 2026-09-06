@@ -12,6 +12,7 @@ import math
 BASE = Path(__file__).parent
 API_WAITTIME = "https://api.themeparks.wiki/preview/parks/HongKongDisneylandPark/waittime"
 API_CALENDAR = "https://api.themeparks.wiki/preview/parks/HongKongDisneylandPark/calendar"
+ENTERTAINMENT_URL = "https://www.hongkongdisneyland.com/finder/api/v1/explorer-service/list-ancestor-entities/hkdl/hkdl;entityType=destination/{date}/entertainment"
 OUT = BASE / "data" / "hkdl.json"
 HIST = BASE / "data" / "history.json"  # rolling: last 48 hours, ~5-min samples
 MAX_HISTORY = 576  # 48h ÷ 5min = 576 samples
@@ -155,6 +156,32 @@ def main():
         lands_out.append({"nameZh": L['nameZh'], "name": L['name'], "rides": d.get('rides',0), "avgWait": avg_wait})
     lands_out.sort(key=lambda x: -x['avgWait'])
 
+    # Fetch entertainment schedule from official HKDL API (no auth needed)
+    entertainment = []
+    try:
+        ent_data = fetch(ENTERTAINMENT_URL.format(date=time.strftime('%Y-%m-%d')))
+        for ent in ent_data.get('results', []):
+            name = ent.get('name', '')
+            schedules = (ent.get('schedule') or {}).get('schedules', [])
+            if not schedules:
+                continue
+            lower_name = name.lower()
+            etype = 'show'
+            if 'parade' in lower_name or '巡遊' in name:
+                etype = 'parade'
+            elif 'momentous' in lower_name or 'nighttime' in lower_name or 'spectacular' in lower_name:
+                etype = 'fireworks'
+            for sch in schedules:
+                if sch.get('isClosed'):
+                    continue
+                entertainment.append({
+                    'name': name,
+                    'time': sch.get('startTime', ''),
+                    'type': etype,
+                })
+    except Exception as e:
+        sys.stderr.write(f'Entertainment API error: {e}\n')
+
     # History accumulation
     hist = load_history()
     snapshot = {a['id']: a['waitTime'] for a in attractions if a['type']=='ATTRACTION'}
@@ -176,6 +203,7 @@ def main():
         "attractions": attractions,
         "lands": lands_out,
         "history": hist_list,
+        "entertainment": entertainment,
     }
     OUT.parent.mkdir(exist_ok=True)
     OUT.write_text(json.dumps(out, ensure_ascii=False, indent=1), encoding="utf-8")

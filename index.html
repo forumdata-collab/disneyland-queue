@@ -175,7 +175,12 @@ function renderParkInfo(){
     const mins=Math.max(0,Math.floor((new Date(DATA.closingTime)-new Date())/60000));
     closingNote=mins>0?`<b>${Math.floor(mins/60)}h${mins%60}m 後閉園</b>`:'<b>已閉園</b>';
   }
-  document.getElementById('parkInfo').innerHTML=`📅 營業時間 <b>${o} – ${c}</b>${closingNote?' · '+closingNote:''}`;
+  const fw=DATA.entertainment?DATA.entertainment.filter(e=>e.type==='fireworks'):[];
+  const pd=DATA.entertainment?DATA.entertainment.filter(e=>e.type==='parade'):[];
+  const parts=[];
+  if(fw.length)parts.push(`🎆 煙花 ${fw.map(e=>e.time.slice(0,5)).join('/')}`);
+  if(pd.length)parts.push(`🎉 巡遊 ${pd.map(e=>e.time.slice(0,5)).join('/')}`);
+  document.getElementById('parkInfo').innerHTML=`📅 營業時間 <b>${o} – ${c}</b>${closingNote?' · '+closingNote:''}${parts.length?'<br>'+parts.join(' · '):''}`;
 }
 
 function renderLandStrip(){
