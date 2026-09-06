@@ -8,6 +8,7 @@ import json, os, time, urllib.request
 from pathlib import Path
 from collections import defaultdict
 import math
+import sys
 
 BASE = Path(__file__).parent
 API_WAITTIME = "https://api.themeparks.wiki/preview/parks/HongKongDisneylandPark/waittime"
@@ -156,29 +157,38 @@ def main():
         lands_out.append({"nameZh": L['nameZh'], "name": L['name'], "rides": d.get('rides',0), "avgWait": avg_wait})
     lands_out.sort(key=lambda x: -x['avgWait'])
 
-    # Fetch entertainment schedule from official HKDL API (no auth needed)
+    # Fetch entertainment schedule from official HKDL API (no auth, flaky — retry once)
     entertainment = []
     try:
-        ent_data = fetch(ENTERTAINMENT_URL.format(date=time.strftime('%Y-%m-%d')))
-        for ent in ent_data.get('results', []):
-            name = ent.get('name', '')
-            schedules = (ent.get('schedule') or {}).get('schedules', [])
-            if not schedules:
-                continue
-            lower_name = name.lower()
-            etype = 'show'
-            if 'parade' in lower_name or '巡遊' in name:
-                etype = 'parade'
-            elif 'momentous' in lower_name or 'nighttime' in lower_name or 'spectacular' in lower_name:
-                etype = 'fireworks'
-            for sch in schedules:
-                if sch.get('isClosed'):
+        ent_data = None
+        for attempt in range(2):
+            try:
+                ent_data = fetch(ENTERTAINMENT_URL.format(date=time.strftime('%Y-%m-%d')))
+                break
+            except urllib.error.HTTPError as e:
+                if e.code != 502 or attempt == 1:
+                    raise
+                time.sleep(3)
+        if ent_data:
+            for ent in ent_data.get('results', []):
+                name = ent.get('name', '')
+                schedules = (ent.get('schedule') or {}).get('schedules', [])
+                if not schedules:
                     continue
-                entertainment.append({
-                    'name': name,
-                    'time': sch.get('startTime', ''),
-                    'type': etype,
-                })
+                lower_name = name.lower()
+                etype = 'show'
+                if 'parade' in lower_name or '巡遊' in name:
+                    etype = 'parade'
+                elif 'momentous' in lower_name or 'nighttime' in lower_name or 'spectacular' in lower_name:
+                    etype = 'fireworks'
+                for sch in schedules:
+                    if sch.get('isClosed'):
+                        continue
+                    entertainment.append({
+                        'name': name,
+                        'time': sch.get('startTime', ''),
+                        'type': etype,
+                    })
     except Exception as e:
         sys.stderr.write(f'Entertainment API error: {e}\n')
 
