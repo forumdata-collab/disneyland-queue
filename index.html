@@ -58,6 +58,9 @@
   .tab-bar button{flex:1;padding:10px 0;background:none;border:none;color:var(--sub);font-size:.7rem;cursor:pointer}
   .tab-bar button.on{color:var(--blue)}
   .tab-bar button svg{display:block;margin:0 auto 2px;width:20px;height:20px;fill:currentColor}
+  .locate-btn{position:absolute;right:10px;bottom:120px;z-index:1000;width:34px;height:34px;border-radius:8px;background:var(--card);border:1px solid var(--border);color:#3b82f6;display:flex;align-items:center;justify-content:center;cursor:pointer;font-size:16px;box-shadow:0 2px 6px rgba(0,0,0,.4)}
+  .locate-btn:active{transform:scale(.95)}
+  .locate-btn.locating{color:var(--amber)}
   .hidden{display:none!important}
   @media(min-width:700px){#map{flex:0 0 60vh}.list{columns:2;column-gap:10px} .item{break-inside:avoid}}
   .tab-bar{position:fixed;bottom:0;left:0;right:0;display:flex;background:var(--card);border-top:1px solid var(--border);z-index:2}
@@ -68,7 +71,9 @@
   <h1>🏰 香港迪士尼樂園<span>即時等候</span></h1>
   <button class="refresh" onclick="loadData()" title="更新">🔄</button>
 </div>
-<div id="map"></div>
+<div id="map">
+  <div class="locate-btn" id="locateBtn" onclick="locateMe()" title="顯示我的位置">📍</div>
+</div>
 <div class="panel" id="listPanel">
   <div class="park-info" id="parkInfo"></div>
   <div class="updated" id="updatedAt"></div>
@@ -251,6 +256,54 @@ function showTab(t){
   document.getElementById('tabMap').classList.toggle('on',t==='map');
   document.getElementById('listPanel').classList.toggle('hidden',t==='map');
   if(t==='map'&&MAP)setTimeout(()=>MAP.invalidateSize(),100);
+}
+
+// --- 我的位置 (geolocation) ---
+let userMarker=null, userCircle=null;
+function haversineKm(lat1,lon1,lat2,lon2){
+  const R=6371;
+  const dLat=(lat2-lat1)*Math.PI/180, dLon=(lon2-lon1)*Math.PI/180;
+  const a=Math.sin(dLat/2)**2+Math.cos(lat1*Math.PI/180)*Math.cos(lat2*Math.PI/180)*Math.sin(dLon/2)**2;
+  return R*2*Math.asin(Math.sqrt(a));
+}
+function nearestRide(lat,lon){
+  if(!DATA)return null;
+  let best=null,bestD=1e9;
+  for(const a of DATA.attractions){
+    if(!a.lat||a.type!=='ATTRACTION')continue;
+    const d=haversineKm(lat,lon,a.lat,a.lon);
+    if(d<bestD){bestD=d;best=a;}
+  }
+  return best?{ride:best,km:bestD}:null;
+}
+function locateMe(){
+  const btn=document.getElementById('locateBtn');
+  if(!navigator.geolocation){btn.style.color='var(--red)';return}
+  btn.classList.add('locating');
+  btn.innerHTML='⏳';
+  navigator.geolocation.getCurrentPosition(pos=>{
+    const {latitude:lat,longitude:lon}=pos.coords;
+    const acc=pos.coords.accuracy||30;
+    // remove old
+    if(userMarker)MAP.removeLayer(userMarker);
+    if(userCircle)MAP.removeLayer(userCircle);
+    userCircle=L.circle([lat,lon],{radius:acc,color:'#3b82f6',fillColor:'#3b82f6',fillOpacity:.12,weight:1}).addTo(MAP);
+    const icon=L.divIcon({html:`<div style="width:14px;height:14px;background:#3b82f6;border:3px solid #fff;border-radius:50%;box-shadow:0 0 10px rgba(59,130,246,.8)"></div>`,className:'',iconSize:[14,14],iconAnchor:[7,7]});
+    userMarker=L.marker([lat,lon],{icon}).addTo(MAP);
+    const near=nearestRide(lat,lon);
+    const popup=near
+      ?`<b>我的位置</b><br>附近：${near.ride.nameZh}（${Math.round(near.km*1000)}m）<br>等候：${near.ride.waitTime!==null?near.ride.waitTime+' 分鐘':'—'}`
+      :`<b>我的位置</b>`;
+    userMarker.bindPopup(popup).openPopup();
+    MAP.setView([lat,lon],17);
+    btn.classList.remove('locating');
+    btn.innerHTML='📍';
+  },err=>{
+    btn.classList.remove('locating');
+    btn.innerHTML='📍';
+    btn.style.color='var(--red)';
+    setTimeout(()=>btn.style.color='#3b82f6',2000);
+  },{enableHighAccuracy:true,timeout:10000,maximumAge:60000});
 }
 initMap();
 loadData();
