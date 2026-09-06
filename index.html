@@ -1,0 +1,187 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>香港迪士尼樂園 即時等候時間 | HK Disneyland Wait Times</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<style>
+  :root{--bg:#0f172a;--card:#1e293b;--text:#e2e8f0;--sub:#94a3b8;--green:#22c55e;--amber:#f59e0b;--red:#ef4444;--blue:#3b82f6;--border:#334155}
+  *{margin:0;padding:0;box-sizing:border-box}
+  body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",system-ui,sans-serif;background:var(--bg);color:var(--text);min-height:100vh;display:flex;flex-direction:column}
+  #map{flex:0 0 50vh;min-height:320px;z-index:1}
+  .panel{flex:1;overflow-y:auto;padding:12px 16px 80px}
+  .header{display:flex;align-items:center;justify-content:space-between;padding:12px 16px 8px;flex-shrink:0}
+  .header h1{font-size:1rem;font-weight:600;white-space:nowrap}
+  .header h1 span{font-size:.7rem;color:var(--sub);margin-left:6px}
+  .refresh{background:none;border:1px solid var(--border);color:var(--sub);border-radius:6px;padding:4px 10px;font-size:.75rem;cursor:pointer}
+  .updated{font-size:.65rem;color:var(--sub);text-align:center;padding:4px 0 12px}
+  .list{display:flex;flex-direction:column;gap:6px}
+  .item{display:grid;grid-template-columns:auto 1fr auto;align-items:center;gap:10px;background:var(--card);border:1px solid var(--border);border-radius:10px;padding:10px 12px}
+  .item .dot{width:10px;height:10px;border-radius:50%;flex-shrink:0}
+  .item .dot.operating{background:var(--green)}
+  .item .dot.closing-soon{background:var(--amber)}
+  .item .dot.closed{background:var(--red);opacity:.5}
+  .item .name{font-size:.85rem;line-height:1.3}
+  .item .name small{color:var(--sub);font-size:.7rem;display:block;margin-top:1px}
+  .item .wait{text-align:right;white-space:nowrap}
+  .item .wait .time{font-size:1.3rem;font-weight:700;line-height:1}
+  .item .wait .label{font-size:.6rem;color:var(--sub);text-transform:uppercase;letter-spacing:.03em}
+  .item.waiting .time{color:var(--amber)}
+  .item.nowait .time{color:var(--green)}
+  .item.no-wait-label .label{color:var(--green)}
+  .badge{display:inline-block;padding:1px 5px;border-radius:4px;font-size:.6rem;font-weight:600;margin-top:3px;vertical-align:middle}
+  .badge.RIDE{background:#312e81;color:#a5b4fc}
+  .badge.SHOW{background:#7c2d12;color:#fed7aa}
+  .badge.MEET{background:#701a75;color:#f5d0fe}
+  .filter-bar{display:flex;gap:6px;padding:8px 0 12px;overflow-x:auto;flex-shrink:0}
+  .filter-bar button{background:var(--card);border:1px solid var(--border);color:var(--sub);border-radius:8px;padding:4px 12px;font-size:.72rem;white-space:nowrap;cursor:pointer;transition:all .15s}
+  .filter-bar button.on{background:var(--blue);border-color:var(--blue);color:#fff}
+  .empty{text-align:center;color:var(--sub);padding:40px 0;font-size:.85rem}
+  @media(min-width:700px){#map{flex:0 0 60vh}}
+  .loading{display:flex;align-items:center;justify-content:center;height:200px;color:var(--sub);font-size:.85rem}
+  .tab-bar{position:fixed;bottom:0;left:0;right:0;display:flex;background:var(--card);border-top:1px solid var(--border);z-index:2}
+  .tab-bar button{flex:1;padding:10px 0;background:none;border:none;color:var(--sub);font-size:.7rem;cursor:pointer}
+  .tab-bar button.on{color:var(--blue)}
+  .tab-bar button svg{display:block;margin:0 auto 2px;width:20px;height:20px;fill:currentColor}
+  .hidden{display:none!important}
+  .status-filter{display:flex;flex-wrap:wrap;gap:5px;padding:4px 0 8px}
+  .status-filter button{background:var(--card);border:1px solid var(--border);color:var(--sub);border-radius:6px;padding:2px 8px;font-size:.65rem;cursor:pointer}
+  .status-filter button.on{border-color:var(--blue);color:#fff;background:rgba(59,130,246,.15)}
+</style>
+</head>
+<body>
+<div class="header">
+  <h1>🏰 香港迪士尼樂園<span>即時等候</span></h1>
+  <button class="refresh" onclick="loadData()" title="更新">🔄 更新</button>
+</div>
+<div id="map"></div>
+<div class="panel" id="listPanel">
+  <div class="updated" id="updatedAt"></div>
+  <div class="filter-bar" id="filterBar"></div>
+  <div class="list" id="list">
+    <div class="loading">載入中…</div>
+  </div>
+</div>
+<div class="tab-bar">
+  <button id="tabList" class="on" onclick="showTab('list')">
+    <svg viewBox="0 0 24 24"><path d="M3 4h18v2H3zm0 7h18v2H3zm0 7h18v2H3z"/></svg>
+    清單
+  </button>
+  <button id="tabMap" onclick="showTab('map')">
+    <svg viewBox="0 0 24 24"><path d="M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7zm0 9.5a2.5 2.5 0 110-5 2.5 2.5 0 010 5z"/></svg>
+    地圖
+  </button>
+</div>
+<script>
+let DATA=null, MAP=null, markers={};
+const STATUS_FILTERS=['Operating','Closed','Refurbishment','Planned Closure'];
+const TYPE_FILTERS=['ride','meet','restaurant','other'];
+let activeStatus=new Set(['Operating']);
+let activeType=new Set(TYPE_FILTERS);
+
+const COLORS={Operating:'#22c55e','Planned Closure':'#ef4444','Closed':'#ef4444','Refurbishment':'#f59e0b','Temporarily Closed':'#ef4444'};
+const ZH_STATUS={Operating:'營運中','Closed':'已關閉','Refurbishment':'維修中','Planned Closure':'預約關閉','Temporarily Closed':'暫時關閉'};
+
+function rideType(a){
+  const n=(a.nameZh||a.name).toLowerCase();
+  if(n.includes('會面')||n.includes('meet'))return 'meet';
+  if(a.type==='RESTAURANT'||n.includes('cafe')||n.includes('restaurant')||n.includes('inn'))return 'restaurant';
+  if(a.status==='Operating'&&(a.waitTime!==null))return 'ride';
+  return 'other';
+}
+function statusColor(s){return COLORS[s]||'#64748b'}
+function waitClass(w){return w===null?'no-wait':w<=15?'nowait':'waiting'}
+function waitMinutes(w){return w===null?'—':w+'′'}
+function waitLabel(w){return w===null?'已關閉':w===0?'即場上車':'等候'}
+
+async function loadData(){
+  try{
+    const r=await fetch('./data/hkdl.json?t='+Date.now());
+    DATA=await r.json();
+    renderFilters();renderList();renderMap();updateTime();
+  }catch(e){
+    document.getElementById('list').innerHTML='<div class="empty">❌ 載入失敗，請稍後再試</div>';
+  }
+}
+
+function renderFilters(){
+  const bar=document.getElementById('filterBar');
+  const typeNames={ride:'🎢 遊樂設施',meet:'🤝 角色會面',restaurant:'🍽️ 餐飲',other:'📍 其他'};
+  bar.innerHTML=[...TYPE_FILTERS].map(t=>
+    `<button data-type="${t}" class="${activeType.has(t)?'on':''}" onclick="toggleType('${t}')">${typeNames[t]}</button>`
+  ).join('');
+}
+
+function toggleType(t){activeType.has(t)?activeType.delete(t):activeType.add(t);renderFilters();renderList();updateMarkers()}
+
+function filtered(){
+  if(!DATA)return[];
+  return DATA.attractions.filter(a=>{
+    const rt=rideType(a);
+    return activeType.has(rt);
+  }).sort((a,b)=>{
+    if(a.waitTime===null&&b.waitTime!==null)return 1;
+    if(a.waitTime!==null&&b.waitTime===null)return-1;
+    return(a.waitTime||999)-(b.waitTime||999);
+  });
+}
+
+function renderList(){
+  const el=document.getElementById('list');
+  const items=filtered();
+  if(!items.length){el.innerHTML='<div class="empty">冇符合條件嘅設施</div>';return}
+  el.innerHTML=items.map(a=>{
+    const rt=rideType(a);
+    const rtLabel={ride:'RIDE',meet:'MEET',restaurant:'FOOD',other:'OTHER'}[rt];
+    return`<div class="item ${waitClass(a.waitTime)}" data-id="${a.name}">
+      <div class="dot" style="background:${statusColor(a.status)}" title="${ZH_STATUS[a.status]||a.status}"></div>
+      <div class="name">${a.nameZh}<small>${a.name}</small><span class="badge ${rtLabel==='RIDE'?'RIDE':rtLabel==='MEET'?'MEET':rtLabel==='FOOD'?'RIDE':'SHOW'}">${rtLabel==='FOOD'?'FOOD':rtLabel}</span></div>
+      <div class="wait"><div class="time">${waitMinutes(a.waitTime)}</div><div class="label">${waitLabel(a.waitTime)}</div></div>
+    </div>`;
+  }).join('');
+}
+
+function updateTime(){
+  document.getElementById('updatedAt').innerHTML=`最後更新：${DATA?DATA.updated:'—'}`;
+}
+
+// --- MAP ---
+function initMap(){
+  MAP=L.map('map',{zoomControl:false,attributionControl:true}).setView([22.3125,114.042],17);
+  L.control.zoom({position:'bottomright'}).addTo(MAP);
+  L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png',{
+    attribution:'&copy; CartoDB &copy; OSM',maxZoom:19
+  }).addTo(MAP);
+}
+function renderMap(){updateMarkers()}
+function updateMarkers(){
+  if(!MAP)return;
+  const items=filtered();
+  Object.values(markers).forEach(m=>MAP.removeLayer(m));
+  markers={};
+  items.forEach(a=>{
+    if(a.lat===null)return;
+    const c=statusColor(a.status);
+    const html=`<div style="background:${c};color:#fff;border-radius:8px;padding:2px 6px;font-size:11px;font-weight:700;white-space:nowrap;border:2px solid rgba(0,0,0,.3);box-shadow:0 2px 4px rgba(0,0,0,.4)">${a.waitTime!==null?a.waitTime+'′':'—'}</div>`;
+    const icon=L.divIcon({html,className:'',iconSize:[36,22],iconAnchor:[18,11]});
+    const m=L.marker([a.lat,a.lon],{icon}).addTo(MAP);
+    m.bindPopup(`<b>${a.nameZh}</b><br>${a.name}<br>${ZH_STATUS[a.status]||a.status}${a.waitTime!==null?'<br><b>'+a.waitTime+' 分鐘</b>':''}`);
+    markers[a.name]=m;
+  });
+}
+
+function showTab(tab){
+  document.getElementById('tabList').classList.toggle('on',tab==='list');
+  document.getElementById('tabMap').classList.toggle('on',tab==='map');
+  document.getElementById('listPanel').classList.toggle('hidden',tab==='map');
+  if(tab==='map'&&MAP)MAP.invalidateSize();
+}
+
+initMap();
+loadData();
+setInterval(loadData,5*60*1000);
+</script>
+</body>
+</html>
