@@ -14,6 +14,7 @@ BASE = Path(__file__).parent
 API_WAITTIME = "https://api.themeparks.wiki/preview/parks/HongKongDisneylandPark/waittime"
 API_CALENDAR = "https://api.themeparks.wiki/preview/parks/HongKongDisneylandPark/calendar"
 ENTERTAINMENT_URL = "https://www.hongkongdisneyland.com/finder/api/v1/explorer-service/list-ancestor-entities/hkdl/hkdl;entityType=destination/{date}/entertainment"
+ENT_CACHE = BASE / "data" / "entertainment_cache.json"  # daily: refetch once per day (09:00 first run)
 OUT = BASE / "data" / "hkdl.json"
 HIST = BASE / "data" / "history.json"  # rolling: last 48 hours, ~5-min samples
 MAX_HISTORY = 576  # 48h ÷ 5min = 576 samples
@@ -157,40 +158,53 @@ def main():
         lands_out.append({"nameZh": L['nameZh'], "name": L['name'], "rides": d.get('rides',0), "avgWait": avg_wait})
     lands_out.sort(key=lambda x: -x['avgWait'])
 
-    # Fetch entertainment schedule from official HKDL API (no auth, flaky — retry once)
+    # Daily entertainment schedule: refetch only when cache is stale (today not yet fetched)
     entertainment = []
-    try:
-        ent_data = None
-        for attempt in range(2):
-            try:
-                ent_data = fetch(ENTERTAINMENT_URL.format(date=time.strftime('%Y-%m-%d')))
-                break
-            except urllib.error.HTTPError as e:
-                if e.code != 502 or attempt == 1:
-                    raise
-                time.sleep(3)
-        if ent_data:
-            for ent in ent_data.get('results', []):
-                name = ent.get('name', '')
-                schedules = (ent.get('schedule') or {}).get('schedules', [])
-                if not schedules:
-                    continue
-                lower_name = name.lower()
-                etype = 'show'
-                if 'parade' in lower_name or '巡遊' in name:
-                    etype = 'parade'
-                elif 'momentous' in lower_name or 'nighttime' in lower_name or 'spectacular' in lower_name:
-                    etype = 'fireworks'
-                for sch in schedules:
-                    if sch.get('isClosed'):
+    today = time.strftime('%Y-%m-%d')
+    cache_hit = False
+    if ENT_CACHE.exists():
+        try:
+            cache_raw = json.loads(ENT_CACHE.read_text(encoding='utf-8'))
+            if cache_raw.get('date') == today and isinstance(cache_raw.get('list'), list):
+                entertainment = cache_raw['list']
+                cache_hit = True
+        except Exception:
+            pass
+    if not cache_hit:
+        try:
+            ent_data = None
+            for attempt in range(2):
+                try:
+                    ent_data = fetch(ENTERTAINMENT_URL.format(date=today))
+                    break
+                except urllib.error.HTTPError as e:
+                    if e.code != 502 or attempt == 1:
+                        raise
+                    time.sleep(3)
+            if ent_data:
+                for ent in ent_data.get('results', []):
+                    name = ent.get('name', '')
+                    schedules = (ent.get('schedule') or {}).get('schedules', [])
+                    if not schedules:
                         continue
-                    entertainment.append({
-                        'name': name,
-                        'time': sch.get('startTime', ''),
-                        'type': etype,
-                    })
-    except Exception as e:
-        sys.stderr.write(f'Entertainment API error: {e}\n')
+                    lower_name = name.lower()
+                    etype = 'show'
+                    if 'parade' in lower_name or '巡遊' in name:
+                        etype = 'parade'
+                    elif 'momentous' in lower_name or 'nighttime' in lower_name or 'spectacular' in lower_name:
+                        etype = 'fireworks'
+                    for sch in schedules:
+                        if sch.get('isClosed'):
+                            continue
+                        entertainment.append({
+                            'name': name,
+                            'time': sch.get('startTime', ''),
+                            'type': etype,
+                        })
+                ENT_CACHE.parent.mkdir(exist_ok=True)
+                ENT_CACHE.write_text(json.dumps({'date': today, 'list': entertainment}, ensure_ascii=False), encoding='utf-8')
+        except Exception as e:
+            sys.stderr.write(f'Entertainment API error: {e}\n')
 
     # History accumulation
     hist = load_history()
