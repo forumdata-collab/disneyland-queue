@@ -4,7 +4,7 @@
 Source: api.themeparks.wiki (free, no key). history.json maintained across runs.
 Output: {updated, parkName, openingTime, closingTime, attractions: [...], lands: [...]}
 """
-import json, os, time, urllib.request
+import json, os, time, urllib.request, datetime
 from pathlib import Path
 from collections import defaultdict
 import math
@@ -16,8 +16,10 @@ API_CALENDAR = "https://api.themeparks.wiki/preview/parks/HongKongDisneylandPark
 ENTERTAINMENT_URL = "https://www.hongkongdisneyland.com/finder/api/v1/explorer-service/list-ancestor-entities/hkdl/hkdl;entityType=destination/{date}/entertainment"
 ENT_CACHE = BASE / "data" / "entertainment_cache.json"  # daily: refetch once per day (09:00 first run)
 OUT = BASE / "data" / "hkdl.json"
-HIST = BASE / "data" / "history.json"  # rolling: last 48 hours, ~5-min samples
-MAX_HISTORY = 576  # 48h ÷ 5min = 576 samples
+HIST = BASE / "data" / "history.json"  # rolling: last ~5 weeks, 5-min samples, keyed "YYYY-MM-DD HH:MM"
+MAX_HISTORY = 6000  # ≈ 38 park-days (13h/day × 12/h) — enough for weekday/weekend/holiday contrast
+HOLIDAYS = BASE / "data" / "hk_holidays.json"  # HK statutory holidays (1823.gov.hk), cached per year
+HOLIDAY_URL = "https://www.1823.gov.hk/common/ical/en.json"
 
 # ── Land mapping by coordinate clustering (adjacent areas) ──
 LANDS = [
@@ -100,7 +102,7 @@ ZH = {
 def fetch(url, timeout=30):
     req = urllib.request.Request(url, headers={"User-Agent": "disneyland-we1co/1.0 (+https://we1co.me)"})
     with urllib.request.urlopen(req, timeout=timeout) as r:
-        return json.loads(r.read().decode())
+        return json.loads(r.read().decode("utf-8-sig"))
 
 def load_history():
     try: return json.loads(HIST.read_text(encoding='utf-8'))
@@ -109,6 +111,40 @@ def load_history():
 def save_history(hist):
     HIST.parent.mkdir(exist_ok=True)
     HIST.write_text(json.dumps(hist, ensure_ascii=False, indent=1), encoding='utf-8')
+
+def load_holidays():
+    """HK statutory holidays as set of 'YYYY-MM-DD'. Refetch from 1823.gov.hk when cache lacks current year."""
+    today = datetime.date.today()
+    need_fetch = True
+    if HOLIDAYS.exists():
+        try:
+            data = json.loads(HOLIDAYS.read_text(encoding='utf-8'))
+            if isinstance(data, list) and any(str(today.year) in d for d in data):
+                return set(data)
+        except Exception:
+            pass
+    try:
+        raw = fetch(HOLIDAY_URL)
+        dates = []
+        for ev in (raw.get('vcalendar') or [{}])[0].get('vevent', []):
+            d = (ev.get('dtstart') or [''])[0]
+            if len(d) == 8 and d.isdigit():
+                dates.append(f"{d[:4]}-{d[4:6]}-{d[6:8]}")
+        if dates:
+            HOLIDAYS.parent.mkdir(exist_ok=True)
+            HOLIDAYS.write_text(json.dumps(sorted(dates), ensure_ascii=False), encoding='utf-8')
+            return set(dates)
+    except Exception as e:
+        sys.stderr.write(f'Holiday fetch error: {e}\n')
+    return set()
+
+def day_type(holidays):
+    """'weekday' | 'weekend' | 'holiday' for today."""
+    today = time.strftime('%Y-%m-%d')
+    if today in holidays:
+        return 'holiday'
+    wd = datetime.date.today().weekday()
+    return 'weekend' if wd >= 5 else 'weekday'
 
 def main():
     now_iso = time.strftime("%Y-%m-%dT%H:%M:%S%z")
@@ -206,10 +242,12 @@ def main():
         except Exception as e:
             sys.stderr.write(f'Entertainment API error: {e}\n')
 
-    # History accumulation
+    # History accumulation — keyed by "YYYY-MM-DD HH:MM" so weekday/weekend/holiday
+    # samples accumulate instead of overwriting each other
     hist = load_history()
     snapshot = {a['id']: a['waitTime'] for a in attractions if a['type']=='ATTRACTION'}
-    hist[time.strftime("%H:%M")] = snapshot
+    h_key = time.strftime("%Y-%m-%d %H:%M")
+    hist[h_key] = snapshot
     keys = sorted(hist.keys())
     if len(keys) > MAX_HISTORY: hist = {k: hist[k] for k in keys[-MAX_HISTORY:]}
     save_history(hist)
@@ -218,12 +256,18 @@ def main():
     for h_key in keys[-12:]:
         hist_list.append({"t": h_key, "data": hist[h_key]})
 
+    # Day-type tagging (weekday / weekend / holiday) — for trend analysis later
+    holidays = load_holidays()
+    d_type = day_type(holidays)
+
     out = {
         "updated": now_iso,
         "parkName": "Hong Kong Disneyland",
         "openingTime": opening,
         "closingTime": closing,
         "specialEvents": special,
+        "dayType": d_type,
+        "date": time.strftime("%Y-%m-%d"),
         "attractions": attractions,
         "lands": lands_out,
         "history": hist_list,
