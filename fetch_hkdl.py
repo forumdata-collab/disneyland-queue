@@ -1,18 +1,49 @@
 #!/usr/bin/env python3
-"""HK Disneyland wait times fetcher → data/hkdl.json (for disneyland.we1co.me).
+"""HK Disneyland wait times + history + land stats + calendar → data/hkdl.json
 
-Source: https://api.themeparks.wiki (free, no key). Polled by cron.
-Output shape: {updated, parkName, attractions: [{name, waitTime, status, active, lat, lon, type}]}
+Source: api.themeparks.wiki (free, no key). history.json maintained across runs.
+Output: {updated, parkName, openingTime, closingTime, attractions: [...], lands: [...]}
 """
 import json, os, time, urllib.request
 from pathlib import Path
+from collections import defaultdict
+import math
 
-API = "https://api.themeparks.wiki/preview/parks/HongKongDisneylandPark/waittime"
-OUT = Path(__file__).parent / "data" / "hkdl.json"
+BASE = Path(__file__).parent
+API_WAITTIME = "https://api.themeparks.wiki/preview/parks/HongKongDisneylandPark/waittime"
+API_CALENDAR = "https://api.themeparks.wiki/preview/parks/HongKongDisneylandPark/calendar"
+OUT = BASE / "data" / "hkdl.json"
+HIST = BASE / "data" / "history.json"  # rolling: last 48 hours, ~5-min samples
+MAX_HISTORY = 576  # 48h ÷ 5min = 576 samples
 
-# 中文名映射（API 係英文名）— 常用設施；未覆蓋嘅回退英文名
+# ── Land mapping by coordinate clustering (adjacent areas) ──
+LANDS = [
+    {"name": "Main Street, U.S.A.",    "nameZh": "美國小鎮大街",   "lat": 22.31315, "lon": 114.04415},
+    {"name": "Adventureland",          "nameZh": "探險世界",       "lat": 22.31068, "lon": 114.04005},
+    {"name": "Fantasyland",            "nameZh": "幻想世界",       "lat": 22.31235, "lon": 114.04000},
+    {"name": "Toy Story Land",         "nameZh": "反斗奇兵大本營",  "lat": 22.31425, "lon": 114.04055},
+    {"name": "Tomorrowland",           "nameZh": "明日世界",       "lat": 22.31455, "lon": 114.04300},
+    {"name": "Grizzly Gulch",          "nameZh": "灰熊山谷",       "lat": 22.30985, "lon": 114.04185},
+    {"name": "World of Frozen",        "nameZh": "魔雪奇緣世界",    "lat": 22.31260, "lon": 114.03900},
+    {"name": "Mystic Point",           "nameZh": "迷離莊園",       "lat": 22.31020, "lon": 114.04230},
+]
+# Coords close to park (within ~800m)
+PARK_LAT, PARK_LON = 22.3125, 114.0415
+def haversine(lat1,lon1,lat2,lon2):
+    R=6371e3
+    dlat=math.radians(lat2-lat1);dlon=math.radians(lon2-lon1)
+    a=math.sin(dlat/2)**2+math.cos(math.radians(lat1))*math.cos(math.radians(lat2))*math.sin(dlon/2)**2
+    return R*2*math.asin(math.sqrt(a))
+def land_for(lat,lon):
+    if not lat or not lon: return "Other"
+    best,best_d=None,1e9
+    for L in LANDS:
+        d=haversine(lat,lon,L['lat'],L['lon'])
+        if d<best_d: best,best_d=L,d
+    return best['nameZh'] if best and best_d<800 else "Other"
+
 ZH = {
-    '"it\'s a small world"': "小小世界",
+    "it's a small world": "小小世界",
     "Animation Academy": "動畫藝術教室",
     "Ant-Man and The Wasp: Nano Battle!": "蟻俠與黃蜂女：擊戰特攻！",
     "Barrel of Fun": "轉轉彈弓狗",
@@ -29,13 +60,14 @@ ZH = {
     "Geyser Gulch": "灰熊山谷——噴泉山谷",
     "Hyperspace Mountain": "星戰極速穿梭",
     "Iron Man Experience - Presented by AIA": "鐵甲奇俠飛行之旅",
+    "Iron Man Experience - Presented by AIA Experience": "鐵甲奇俠飛行之旅",
     "Iron Man Tech Showcase - Presented by Stark Industries": "鐵甲奇俠裝備展",
     "Jungle River Cruise": "森林河流之旅",
     "Karibuni Marketplace": "卡麗布妮市集",
     "Liki Tikis": "利奇提奇島",
     "Mad Hatter Tea Cups": "瘋帽子旋轉杯",
-    "Main Street Vehicles": "小鎮大街古董車",
     "Main Street Corner Cafe Hosted by Coca-Cola®": "市鎮會堂茶座",
+    "Main Street Vehicles": "小鎮大街古董車",
     "Meet CookieAnn at Duffy and Friends Play House": "CookieAnn 會面",
     "Meet Duffy at Duffy and Friends Play House": "Duffy 會面",
     "Meet Gelatoni at Duffy and Friends Play House": "Gelatoni 會面",
@@ -58,43 +90,97 @@ ZH = {
     "The Royal Reception Hall": "皇室宴會廳",
     "Toy Soldier Parachute Drop": "玩具兵團跳降傘",
     "Wandering Oaken's Sliding Sleighs": "魔雪奇緣世界——雪嶺滑雪橇",
-    "Wandering Oaken’s Sliding Sleighs": "魔雪奇緣世界——雪嶺滑雪橇",
+    "Wandering Oaken's Sliding Sleighs": "魔雪奇緣世界——雪嶺滑雪橇",
     "Wild West Photo Fun": "西部拍照點",
 }
 
-
-def fetch():
-    req = urllib.request.Request(API, headers={"User-Agent": "disneyland-we1co/1.0 (+https://we1co.me)"})
-    with urllib.request.urlopen(req, timeout=30) as r:
+def fetch(url, timeout=30):
+    req = urllib.request.Request(url, headers={"User-Agent": "disneyland-we1co/1.0 (+https://we1co.me)"})
+    with urllib.request.urlopen(req, timeout=timeout) as r:
         return json.loads(r.read().decode())
 
+def load_history():
+    try: return json.loads(HIST.read_text(encoding='utf-8'))
+    except: return {}
+
+def save_history(hist):
+    HIST.parent.mkdir(exist_ok=True)
+    HIST.write_text(json.dumps(hist, ensure_ascii=False, indent=1), encoding='utf-8')
 
 def main():
-    data = fetch()
-    atts = data.get("attractions", [])
+    now_iso = time.strftime("%Y-%m-%dT%H:%M:%S%z")
+    wait_data = fetch(API_WAITTIME)
+    cal_data = fetch(API_CALENDAR)
+    
+    today_str = time.strftime("%Y-%m-%d")
+    cal_today = next((c for c in cal_data.get('calendar',[]) if c['date']==today_str), None)
+    opening = cal_today['openingTime'] if cal_today else None
+    closing = cal_today['closingTime'] if cal_today else None
+    special = cal_today.get('special',[]) if cal_today else []
+
+    atts = wait_data.get('attractions', [])
+    attractions = []
+    for a in atts:
+        lat = (a.get('meta') or {}).get('latitude')
+        lon = (a.get('meta') or {}).get('longitude')
+        rid = a['id']
+        name = a['name']
+        if not lat: continue
+        land = land_for(lat, lon)
+        attractions.append({
+            "id": rid,
+            "name": name,
+            "nameZh": ZH.get(name, name),
+            "waitTime": a.get("waitTime"),
+            "status": a.get("status") or "Unknown",
+            "active": bool(a.get("active")),
+            "lat": lat, "lon": lon,
+            "type": (a.get("meta") or {}).get("type", "ATTRACTION"),
+            "land": land,
+        })
+    
+    # Land stats
+    land_data = defaultdict(lambda: {"rides": 0, "waitSum": 0, "waitCount": 0})
+    for a in attractions:
+        if a['type'] != 'ATTRACTION': continue
+        ld = land_data[a['land']]
+        ld['rides'] += 1
+        if a['waitTime'] is not None:
+            ld['waitSum'] += a['waitTime']
+            ld['waitCount'] += 1
+    lands_out = []
+    for L in LANDS:
+        d = land_data.get(L['nameZh'], {})
+        avg_wait = round(d.get('waitSum',0) / d['waitCount']) if d.get('waitCount') else 0
+        lands_out.append({"nameZh": L['nameZh'], "name": L['name'], "rides": d.get('rides',0), "avgWait": avg_wait})
+    lands_out.sort(key=lambda x: -x['avgWait'])
+
+    # History accumulation
+    hist = load_history()
+    snapshot = {a['id']: a['waitTime'] for a in attractions if a['type']=='ATTRACTION'}
+    hist[time.strftime("%H:%M")] = snapshot
+    keys = sorted(hist.keys())
+    if len(keys) > MAX_HISTORY: hist = {k: hist[k] for k in keys[-MAX_HISTORY:]}
+    save_history(hist)
+    # history snapshots as list (for frontend charting: last 12 samples)
+    hist_list = []
+    for h_key in keys[-12:]:
+        hist_list.append({"t": h_key, "data": hist[h_key]})
+
     out = {
-        "updated": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
+        "updated": now_iso,
         "parkName": "Hong Kong Disneyland",
-        "attractions": [
-            {
-                "name": a["name"],
-                "nameZh": ZH.get(a["name"], a["name"]),
-                "waitTime": a.get("waitTime"),
-                "status": a.get("status") or "Unknown",
-                "active": bool(a.get("active")),
-                "lat": (a.get("meta") or {}).get("latitude"),
-                "lon": (a.get("meta") or {}).get("longitude"),
-                "type": (a.get("meta") or {}).get("type", "ATTRACTION"),
-            }
-            for a in sorted(atts, key=lambda x: ZH.get(x["name"], x["name"]))
-            if a.get("meta") and a["meta"].get("latitude")
-        ],
+        "openingTime": opening,
+        "closingTime": closing,
+        "specialEvents": special,
+        "attractions": attractions,
+        "lands": lands_out,
+        "history": hist_list,
     }
     OUT.parent.mkdir(exist_ok=True)
     OUT.write_text(json.dumps(out, ensure_ascii=False, indent=1), encoding="utf-8")
-    rides = [a for a in out["attractions"] if a["type"] == "ATTRACTION"]
-    print(f"OK: {len(out['attractions'])} points ({len(rides)} rides), updated={out['updated']}")
-
+    rides = [a for a in attractions if a["type"] == "ATTRACTION"]
+    print(f"OK: {len(attractions)} points ({len(rides)} rides), {len(lands_out)} lands, {len(hist_list)} history samples, updated={now_iso}")
 
 if __name__ == "__main__":
     main()
