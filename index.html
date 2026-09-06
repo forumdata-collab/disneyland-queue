@@ -151,8 +151,8 @@ function updateTime(){
 function initMap(){
   MAP=L.map('map',{zoomControl:false,attributionControl:true}).setView([22.3125,114.042],17);
   L.control.zoom({position:'bottomright'}).addTo(MAP);
-  L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png',{
-    attribution:'&copy; CartoDB &copy; OSM',maxZoom:19
+  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{
+    attribution:'&copy; OpenStreetMap contributors',maxZoom:19
   }).addTo(MAP);
 }
 function renderMap(){updateMarkers()}
