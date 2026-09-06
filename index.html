@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="zh-Hant">
+<html lang="zh-HK">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
@@ -15,14 +15,20 @@
   :root{--bg:#0f172a;--card:#1e293b;--text:#e2e8f0;--sub:#94a3b8;--green:#22c55e;--amber:#f59e0b;--red:#ef4444;--blue:#3b82f6;--purple:#a855f7;--border:#334155}
   *{margin:0;padding:0;box-sizing:border-box}
   body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",system-ui,sans-serif;background:var(--bg);color:var(--text);min-height:100vh;display:flex;flex-direction:column}
-  #map{flex:0 0 50vh;min-height:300px;z-index:1}
+  #map{flex:0 0 50vh;min-height:300px;z-index:1;position:relative}
   .panel{flex:1;overflow-y:auto;padding:0 12px 80px}
   .header{display:flex;align-items:center;justify-content:space-between;padding:12px 16px 4px;flex-shrink:0}
   .header h1{font-size:1rem;font-weight:600;white-space:nowrap}
   .header h1 span{font-size:.7rem;color:var(--sub);margin-left:6px}
   .refresh{background:none;border:1px solid var(--border);color:var(--sub);border-radius:6px;padding:4px 10px;font-size:.75rem;cursor:pointer}
-  .park-info{background:var(--card);border:1px solid var(--border);border-radius:10px;padding:10px 14px;margin:8px 12px 0;font-size:.78rem;color:var(--sub)}
-  .park-info b{color:var(--text)}
+  .park-info{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin:8px 12px 0;font-size:.72rem;color:var(--sub)}
+  .park-info .info-box{background:var(--card);border:1px solid var(--border);border-radius:10px;padding:8px 10px;text-align:center}
+  .park-info .info-box .info-icon{font-size:1rem;margin-bottom:2px}
+  .park-info .info-box .info-label{font-size:.6rem;letter-spacing:.03em;margin-bottom:2px}
+  .park-info .info-box .info-value{font-weight:700;color:var(--text);font-size:.8rem;line-height:1.2}
+  .park-info .info-box .info-sub{font-size:.6rem;color:var(--sub);margin-top:2px}
+  .park-info .info-box.highlight{border-color:var(--amber)}
+  .park-info .info-box.highlight .info-value{color:var(--amber)}
   .updated{text-align:center;font-size:.65rem;color:var(--sub);padding:6px 0 4px}
   .land-strip{display:flex;gap:6px;overflow-x:auto;padding:8px 0 4px;-webkit-overflow-scrolling:touch;scrollbar-width:none}
   .land-strip::-webkit-scrollbar{display:none}
@@ -46,7 +52,7 @@
   .item .wait .label{font-size:.55rem;color:var(--sub);text-transform:uppercase;letter-spacing:.03em}
   .item.waiting .time{color:var(--amber)}
   .item.nowait .time{color:var(--green)}
-  .item.no-wait-label .label{color:var(--green)}
+  .item.no-wait .label{color:var(--green)}
   .spark{grid-column:1/-1;margin-top:4px;border-radius:6px;background:rgba(0,0,0,.2);padding:4px 6px;display:none}
   .item.show-spark .spark{display:block}
   .spark svg{width:100%;height:28px}
@@ -87,8 +93,8 @@
   <div class="filter-bar" id="filterBar"></div>
   <div class="list" id="list"><div class="loading">載入中…</div></div>
   <div class="footnote">
-    📈 趨勢：↑變長/↓變短/→穩定 係比較最近 30 分鐘（6 個樣本，每 5 分鐘一次）嘅等候時間變化，變化超過 ±10 分鐘先算變長/變短，否則顯示穩定（樣本不足 3 個則不顯示）。
-    資料來源：themeparks.wiki API（非官方、免費、無需密鑰），每 5 分鐘自動更新。等候時間由第三方提供，僅供參考，實際以樂園現場及官方 App 為準。
+    📈 趨勢：↑變長/↓變短/→穩定 係比較最近 30 分鐘（6 個樣本，每 5 分鐘一次）嘅等候時間變化，超過 ±5 分鐘先算變長/變短，否則顯示穩定（樣本不足 3 個則不顯示）。
+    等候時間：themeparks.wiki API（非官方、免費），每 5 分鐘更新。營業時間／巡遊／煙花：香港迪士尼官方網站 API，每日更新。僅供參考，實際以樂園現場及官方 App 為準。
   </div>
   <div style="display:flex;gap:6px;justify-content:center;align-items:center;padding:16px 0 8px;flex-wrap:wrap">
     <a href="https://ko-fi.com/forumdata" target="_blank" rel="noopener" style="color:#f59e0b;text-decoration:none;font-size:.8rem">☕ 請我飲咖啡</a>
@@ -97,10 +103,10 @@
   </div>
 </div>
 <div class="tab-bar">
-  <button id="tabList" class="on" onclick="showTab('list')">
+  <button id="tabList" class="on" role="tab" aria-selected="true" onclick="showTab('list')">
     <svg viewBox="0 0 24 24"><path d="M3 4h18v2H3zm0 7h18v2H3zm0 7h18v2H3z"/></svg> 清單
   </button>
-  <button id="tabMap" onclick="showTab('map')">
+  <button id="tabMap" role="tab" aria-selected="false" onclick="showTab('map')">
     <svg viewBox="0 0 24 24"><path d="M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7zm0 9.5a2.5 2.5 0 110-5 2.5 2.5 0 010 5z"/></svg> 地圖
   </button>
 </div>
@@ -135,11 +141,12 @@ function sparkSVG(samples, rideId){
   const series=samples.map(s=>s.data[rideId]!==undefined?s.data[rideId]:null);
   const valid=series.filter(v=>v!==null);
   if(valid.length<3)return'';  // 至少 3 個有效樣本先畫趨勢，避免誤判
-  const max=Math.max(...valid,10);
   const W=120, H=24;
+  const SCALE_MAX=60;  // 固定 0–60 分鐘比例尺：小變化畫出嚟係細波幅，同 label 一致
   const pts=series.map((v,i)=>{
     if(v===null)return null;
-    return(i*W/(series.length-1))+','+(H - (v/max)*H);
+    const y=H - (Math.min(v,SCALE_MAX)/SCALE_MAX)*H;
+    return(i*W/(series.length-1))+','+y;
   }).filter(Boolean);
   return`<svg viewBox="0 0 ${W} ${H}" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
     <polyline points="${pts.join(' ')}" fill="none" stroke="#3b82f6" stroke-width="1.5" stroke-linejoin="round"/>
@@ -152,18 +159,23 @@ function sparkLabel(samples, rideId){
   const valid=series.filter(v=>v!==null);
   if(valid.length<3)return'';
   const diff=valid[valid.length-1]-valid[0];
-  if(diff>10)return'↑ 變長 '+diff+'′';
-  if(diff<-10)return'↓ 變短 '+Math.abs(diff)+'′';
+  if(diff>5)return'↑ 變長 '+diff+'′';
+  if(diff<-5)return'↓ 變短 '+Math.abs(diff)+'′';
   return'→ 穩定';
 }
 
 async function loadData(){
   try{
     const r=await fetch('./data/hkdl.json?t='+Date.now());
+    if(!r.ok)throw new Error('HTTP '+r.status);
     DATA=await r.json();
     renderParkInfo();renderFilters();renderLandStrip();renderList();
     updateTime();updateMapMarkers();
-  }catch(e){document.getElementById('list').innerHTML='<div class="empty">❌ 載入失敗</div>';}
+  }catch(e){
+    // auto-retry once after 3s (transient network/CF hiccup)
+    if(!window._retried){window._retried=true;setTimeout(()=>{window._retried=false;loadData();},3000);}
+    else{document.getElementById('list').innerHTML='<div class="empty">❌ 載入失敗 — 請撳 🔄 重試</div>';}
+  }
 }
 
 function renderParkInfo(){
@@ -173,14 +185,21 @@ function renderParkInfo(){
   let closingNote='';
   if(DATA.closingTime){
     const mins=Math.max(0,Math.floor((new Date(DATA.closingTime)-new Date())/60000));
-    closingNote=mins>0?`<b>${Math.floor(mins/60)}h${mins%60}m 後閉園</b>`:'<b>已閉園</b>';
+    closingNote=mins>0?`${Math.floor(mins/60)}h${mins%60}m 後閉園`:'已閉園';
   }
   const fw=DATA.entertainment?DATA.entertainment.filter(e=>e.type==='fireworks'):[];
   const pd=DATA.entertainment?DATA.entertainment.filter(e=>e.type==='parade'):[];
-  const parts=[];
-  if(fw.length)parts.push(`🎆 煙花 ${fw.map(e=>e.time.slice(0,5)).join('/')}`);
-  if(pd.length)parts.push(`🎉 巡遊 ${pd.map(e=>e.time.slice(0,5)).join('/')}`);
-  document.getElementById('parkInfo').innerHTML=`📅 營業時間 <b>${o} – ${c}</b>${closingNote?' · '+closingNote:''}${parts.length?'<br>'+parts.join(' · '):''}`;
+  let parkClass = '';
+  if(DATA.closingTime){
+    const mins=Math.max(0,Math.floor((new Date(DATA.closingTime)-new Date())/60000));
+    parkClass = mins>0&&mins<=60 ? ' highlight' : '';
+  }
+  const fwTime=fw.length?fw.map(e=>e.time.slice(0,5)).join('/'):'—';
+  const pdTime=pd.length?pd.map(e=>e.time.slice(0,5)).join('/'):'—';
+  document.getElementById('parkInfo').innerHTML=
+    `<div class="info-box${parkClass}"><div class="info-icon">📅</div><div class="info-label">營業時間</div><div class="info-value">${o} – ${c}</div>${closingNote?`<div class="info-sub">${closingNote}</div>`:''}</div>`+
+    `<div class="info-box"><div class="info-icon">🎉</div><div class="info-label">巡遊</div><div class="info-value">${pdTime}</div></div>`+
+    `<div class="info-box"><div class="info-icon">🎆</div><div class="info-label">煙花</div><div class="info-value">${fwTime}</div></div>`;
 }
 
 function renderLandStrip(){
@@ -262,6 +281,8 @@ function updateMapMarkers(){
 function showTab(t){
   document.getElementById('tabList').classList.toggle('on',t==='list');
   document.getElementById('tabMap').classList.toggle('on',t==='map');
+  document.getElementById('tabList').setAttribute('aria-selected',t==='list');
+  document.getElementById('tabMap').setAttribute('aria-selected',t==='map');
   document.getElementById('listPanel').classList.toggle('hidden',t==='map');
   if(t==='map'&&MAP)setTimeout(()=>MAP.invalidateSize(),100);
 }
