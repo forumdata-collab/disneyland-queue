@@ -129,31 +129,29 @@ function fmtTime(iso){
   return m?m[1]+':'+m[2]:'';
 }
 // trend sparkline SVG — compact for mobile
-function sparkSVG(samples){
+function sparkSVG(samples, rideId){
   // samples = [{t:'HH:MM', data:{rideId:wait}}] — 最近 6 個樣本（30 分鐘）
   if(!samples||samples.length<2)return'';
-  const avgs=samples.map(s=>{
-    const vals=Object.values(s.data).filter(v=>v!==null);
-    return vals.length?Math.round(vals.reduce((a,b)=>a+b,0)/vals.length):null;
-  });
-  const valid=avgs.filter(v=>v!==null);
+  const series=samples.map(s=>s.data[rideId]!==undefined?s.data[rideId]:null);
+  const valid=series.filter(v=>v!==null);
   if(valid.length<3)return'';  // 至少 3 個有效樣本先畫趨勢，避免誤判
   const max=Math.max(...valid,10);
   const W=120, H=24;
-  const pts=avgs.map((v,i)=>{
+  const pts=series.map((v,i)=>{
     if(v===null)return null;
-    return(i*W/(avgs.length-1))+','+(H - (v/max)*H);
+    return(i*W/(series.length-1))+','+(H - (v/max)*H);
   }).filter(Boolean);
   return`<svg viewBox="0 0 ${W} ${H}" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
     <polyline points="${pts.join(' ')}" fill="none" stroke="#3b82f6" stroke-width="1.5" stroke-linejoin="round"/>
     <circle cx="${pts[pts.length-1].split(',')[0]}" cy="${pts[pts.length-1].split(',')[1]}" r="2" fill="#3b82f6"/>
   </svg>`;
 }
-function sparkLabel(samples){
+function sparkLabel(samples, rideId){
   if(!samples||samples.length<2)return'';
-  const avgs=samples.map(s=>{const v=Object.values(s.data).filter(v=>v!==null);return v.length?Math.round(v.reduce((a,b)=>a+b,0)/v.length):null;}).filter(v=>v!==null);
-  if(avgs.length<3)return'';
-  const diff=avgs[avgs.length-1]-avgs[0];
+  const series=samples.map(s=>s.data[rideId]!==undefined?s.data[rideId]:null);
+  const valid=series.filter(v=>v!==null);
+  if(valid.length<3)return'';
+  const diff=valid[valid.length-1]-valid[0];
   if(diff>10)return'↑ 變長 '+diff+'′';
   if(diff<-10)return'↓ 變短 '+Math.abs(diff)+'′';
   return'→ 穩定';
@@ -227,7 +225,7 @@ function renderList(){
         <span class="badge ${TYPE_HASH[rt]}">${rt.toUpperCase()}</span>
       </div>
       <div class="wait"><div class="time">${waitMins(a.waitTime)}</div><div class="label">${waitLabel(a.waitTime)}</div></div>
-      ${hasTrend?`<div class="spark"><span class="strend">${sparkLabel(spark)}</span>${sparkSVG(spark)}</div>`:''}
+      ${hasTrend?`<div class="spark"><span class="strend">${sparkLabel(spark,a.id)}</span>${sparkSVG(spark,a.id)}</div>`:''}
     </div>`;
   }).join('');
 }
