@@ -5,13 +5,14 @@ Source: api.themeparks.wiki (free, no key). history.json maintained across runs.
 Output: {updated, parkName, openingTime, closingTime, attractions: [...], lands: [...]}
 """
 import json, os, time, urllib.request, datetime
+from urllib.error import URLError
 from pathlib import Path
 from collections import defaultdict
 import math
 import sys
 
 BASE = Path(__file__).parent
-API_WAITTIME = "https://api.themeparks.wiki/preview/parks/HongKongDisneylandPark/waittime"
+API_WAITTIME = os.environ.get("DISNEY_API_WAITTIME", "https://api.themeparks.wiki/preview/parks/HongKongDisneylandPark/waittime")
 API_CALENDAR = "https://api.themeparks.wiki/preview/parks/HongKongDisneylandPark/calendar"
 ENTERTAINMENT_URL = "https://www.hongkongdisneyland.com/finder/api/v1/explorer-service/list-ancestor-entities/hkdl/hkdl;entityType=destination/{date}/entertainment"
 ENT_CACHE = BASE / "data" / "entertainment_cache.json"  # daily: refetch once per day (09:00 first run)
@@ -99,18 +100,34 @@ ZH = {
     "Wild West Photo Fun": "西部拍照點",
 }
 
-def fetch(url, timeout=30):
-    req = urllib.request.Request(url, headers={"User-Agent": "disneyland-we1co/1.0 (+https://we1co.me)"})
-    with urllib.request.urlopen(req, timeout=timeout) as r:
-        return json.loads(r.read().decode("utf-8-sig"))
+def fetch(url, timeout=30, retries=3):
+    """GET + JSON parse，附指數退避重試（blip 唔使 page 用戶）。"""
+    last = None
+    for attempt in range(retries):
+        try:
+            req = urllib.request.Request(url, headers={"User-Agent": "disneyland-we1co/1.0 (+https://we1co.me)"})
+            with urllib.request.urlopen(req, timeout=timeout) as r:
+                return json.loads(r.read().decode("utf-8-sig"))
+        except (URLError, TimeoutError, OSError) as e:
+            last = e if last is None else last
+            if attempt < retries - 1:
+                time.sleep(2 * (attempt + 1))
+    raise RuntimeError(f"fetch failed after {retries} tries: {last}") from last
 
 def load_history():
     try: return json.loads(HIST.read_text(encoding='utf-8'))
     except: return {}
 
+def atomic_write(path, data):
+    """Write JSON atomically (tmp + os.replace) so a torn write never
+    corrupts op.json / history.json for the frontend or the next cron run."""
+    t = Path(str(path) + ".tmp")
+    t.write_text(json.dumps(data, ensure_ascii=False, indent=1), encoding='utf-8')
+    os.replace(t, path)
+
 def save_history(hist):
     HIST.parent.mkdir(exist_ok=True)
-    HIST.write_text(json.dumps(hist, ensure_ascii=False, indent=1), encoding='utf-8')
+    atomic_write(HIST, hist)
 
 def load_holidays():
     """HK statutory holidays as set of 'YYYY-MM-DD'. Refetch from 1823.gov.hk when cache lacks current year."""
@@ -132,7 +149,7 @@ def load_holidays():
                 dates.append(f"{d[:4]}-{d[4:6]}-{d[6:8]}")
         if dates:
             HOLIDAYS.parent.mkdir(exist_ok=True)
-            HOLIDAYS.write_text(json.dumps(sorted(dates), ensure_ascii=False), encoding='utf-8')
+            atomic_write(HOLIDAYS, sorted(dates))
             return set(dates)
     except Exception as e:
         sys.stderr.write(f'Holiday fetch error: {e}\n')
@@ -238,7 +255,7 @@ def main():
                             'type': etype,
                         })
                 ENT_CACHE.parent.mkdir(exist_ok=True)
-                ENT_CACHE.write_text(json.dumps({'date': today, 'list': entertainment}, ensure_ascii=False), encoding='utf-8')
+                atomic_write(ENT_CACHE, {'date': today, 'list': entertainment})
         except Exception as e:
             sys.stderr.write(f'Entertainment API error: {e}\n')
 
@@ -274,9 +291,27 @@ def main():
         "entertainment": entertainment,
     }
     OUT.parent.mkdir(exist_ok=True)
-    OUT.write_text(json.dumps(out, ensure_ascii=False, indent=1), encoding="utf-8")
+    atomic_write(OUT, out)
     rides = [a for a in attractions if a["type"] == "ATTRACTION"]
     print(f"OK: {len(attractions)} points ({len(rides)} rides), {len(lands_out)} lands, {len(hist_list)} history samples, updated={now_iso}")
 
 if __name__ == "__main__":
-    main()
+    # 連續失敗先報警：第 1 次失敗靜默退出（唔會 page 用戶，亦唔 deploy 舊數據），
+    # 連續 >=2 次先退出 1 觸發 cron 警報。成功即重置計數。
+    FAIL_COUNT = BASE / "data" / ".fetch_fail_count"
+    try:
+        main()
+        FAIL_COUNT.unlink(missing_ok=True)
+    except Exception as e:
+        n = 1
+        try:
+            n = int(FAIL_COUNT.read_text().strip()) + 1
+        except Exception:
+            pass
+        FAIL_COUNT.parent.mkdir(exist_ok=True)
+        FAIL_COUNT.write_text(str(n))
+        if n >= 2:
+            print(f"DISNEY FETCH FAIL (consecutive {n}): {e}")
+            sys.exit(1)
+        sys.stderr.write(f"DISNEY transient fail #{n}: {e}\n")
+        sys.exit(0)

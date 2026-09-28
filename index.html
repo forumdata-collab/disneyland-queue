@@ -111,6 +111,12 @@
   </button>
 </div>
 <script>
+// ── 2026-09-28 audit hardening ─────────────────────────────────────────────
+// All data below originates from a THIRD-PARTY upstream (themeparks.wiki +
+// DL official calendar JSON) and was interpolated raw into innerHTML.
+// Escape every upstream string; numeric fields must be real numbers.
+const esc=v=>String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const numOrNull=v=>(typeof v==='number'&&Number.isFinite(v))?v:null;
 let DATA=null, MAP=null, markers={};
 const TYPE_FILTERS=['ride','meet','food','other'];
 let activeType=new Set(TYPE_FILTERS);
@@ -165,8 +171,13 @@ function sparkLabel(samples, rideId){
 }
 
 async function loadData(){
+  if(window._loading){return}            // audit: no overlapping fetches (5-min tick + manual refresh raced before)
+  window._loading=true;
   try{
-    const r=await fetch('./data/hkdl.json?t='+Date.now());
+    const ctl=new AbortController();      // audit: fetch had NO timeout — a stalled API hung forever and
+    const to=setTimeout(()=>ctl.abort(),15000); // every 5-min tick queued another orphaned fetch
+    const r=await fetch('./data/hkdl.json?t='+Date.now(),{signal:ctl.signal});
+    clearTimeout(to);
     if(!r.ok)throw new Error('HTTP '+r.status);
     DATA=await r.json();
     renderParkInfo();renderFilters();renderLandStrip();renderList();
@@ -175,7 +186,7 @@ async function loadData(){
     // auto-retry once after 3s (transient network/CF hiccup)
     if(!window._retried){window._retried=true;setTimeout(()=>{window._retried=false;loadData();},3000);}
     else{document.getElementById('list').innerHTML='<div class="empty">❌ 載入失敗 — 請撳 🔄 重試</div>';}
-  }
+  }finally{window._loading=false;}
 }
 
 function renderParkInfo(){
@@ -194,10 +205,10 @@ function renderParkInfo(){
     const mins=Math.max(0,Math.floor((new Date(DATA.closingTime)-new Date())/60000));
     parkClass = mins>0&&mins<=60 ? ' highlight' : '';
   }
-  const fwTime=fw.length?fw.map(e=>e.time.slice(0,5)).join('/'):'—';
-  const pdTime=pd.length?pd.map(e=>e.time.slice(0,5)).join('/'):'—';
+  const fwTime=fw.length?fw.map(e=>esc((e.time||'').slice(0,5))).join('/'):'—';
+  const pdTime=pd.length?pd.map(e=>esc((e.time||'').slice(0,5))).join('/'):'—';
   document.getElementById('parkInfo').innerHTML=
-    `<div class="info-box${parkClass}"><div class="info-icon">📅</div><div class="info-label">營業時間</div><div class="info-value">${o} – ${c}</div>${closingNote?`<div class="info-sub">${closingNote}</div>`:''}</div>`+
+    `<div class="info-box${parkClass}"><div class="info-icon">📅</div><div class="info-label">營業時間</div><div class="info-value">${esc(o)} – ${esc(c)}</div>${closingNote?`<div class="info-sub">${esc(closingNote)}</div>`:''}</div>`+
     `<div class="info-box"><div class="info-icon">🎉</div><div class="info-label">巡遊</div><div class="info-value">${pdTime}</div></div>`+
     `<div class="info-box"><div class="info-icon">🎆</div><div class="info-label">煙花</div><div class="info-value">${fwTime}</div></div>`;
 }
@@ -209,9 +220,9 @@ function renderLandStrip(){
   el.innerHTML=DATA.lands.filter(l=>l.rides>0).map(l=>{
     const busy=l.avgWait>maxAvg*0.6;
     return`<div class="land-chip${busy?' busy':''}">
-      <div class="lzh">${l.nameZh}</div>
-      <div class="lavg" style="color:${busy?'var(--amber)':'var(--text)'}">${l.avgWait}′</div>
-      <div class="lcnt">${l.rides} rides</div>
+      <div class="lzh">${esc(l.nameZh)}</div>
+      <div class="lavg" style="color:${busy?'var(--amber)':'var(--text)'}">${numOrNull(l.avgWait)??'—'}′</div>
+      <div class="lcnt">${numOrNull(l.rides)??0} rides</div>
     </div>`;
   }).join('');
 }
@@ -243,13 +254,13 @@ function renderList(){
     const h=DATA.history;
     const spark=h?h.filter(s=>s.data[a.id]!==undefined):[];
     const hasTrend=spark.length>=2&&spark.some(s=>s.data[a.id]!==null);
-    return`<div class="item ${waitClass(a.waitTime)} ${hasTrend?'show-spark':''}" data-id="${a.id}">
-      <div class="dot" style="background:${statusColor(a.status)}" title="${ZH_STATUS[a.status]||a.status}"></div>
-      <div class="name">${a.nameZh}<small>${a.name}</small><span class="land-tag">${a.land||''}</span>
-        <span class="badge ${TYPE_HASH[rt]}">${rt.toUpperCase()}</span>
+    return`<div class="item ${waitClass(a.waitTime)} ${hasTrend?'show-spark':''}" data-id="${esc(a.id)}">
+      <div class="dot" style="background:${statusColor(a.status)}" title="${esc(ZH_STATUS[a.status]||a.status)}"></div>
+      <div class="name">${esc(a.nameZh)}<small>${esc(a.name)}</small><span class="land-tag">${esc(a.land||'')}</span>
+        <span class="badge ${TYPE_HASH[rt]}">${esc(rt.toUpperCase())}</span>
       </div>
-      <div class="wait"><div class="time">${waitMins(a.waitTime)}</div><div class="label">${waitLabel(a.waitTime)}</div></div>
-      ${hasTrend?`<div class="spark"><span class="strend">${sparkLabel(spark,a.id)}</span>${sparkSVG(spark,a.id)}</div>`:''}
+      <div class="wait"><div class="time">${numOrNull(a.waitTime)??'—'}′</div><div class="label">${esc(waitLabel(a.waitTime))}</div></div>
+      ${hasTrend?`<div class="spark"><span class="strend">${esc(sparkLabel(spark,a.id))}</span>${sparkSVG(spark,a.id)}</div>`:''}
     </div>`;
   }).join('');
 }
@@ -274,7 +285,7 @@ function updateMapMarkers(){
     const h=`<div style="background:${c};color:#fff;border-radius:8px;padding:2px 6px;font-size:11px;font-weight:700;white-space:nowrap;border:2px solid rgba(0,0,0,.3)">${a.waitTime!==null?a.waitTime+'′':'—'}</div>`;
     const icon=L.divIcon({html:h,className:'',iconSize:[36,22],iconAnchor:[18,11]});
     const m=L.marker([a.lat,a.lon],{icon}).addTo(MAP);
-    m.bindPopup(`<b>${a.nameZh}</b><br>${a.name}<br>${ZH_STATUS[a.status]||a.status}${a.waitTime!==null?'<br><b>'+a.waitTime+' 分鐘</b>':''}<br><small>${a.land||''}</small>`);
+    m.bindPopup(`<b>${esc(a.nameZh)}</b><br>${esc(a.name)}<br>${esc(ZH_STATUS[a.status]||a.status)}${a.waitTime!==null?'<br><b>'+esc(a.waitTime)+' 分鐘</b>':''}<br><small>${esc(a.land||'')}</small>`);
     markers[a.id]=m;
   });
 }

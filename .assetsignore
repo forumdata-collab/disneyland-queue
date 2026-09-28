@@ -1,0 +1,9 @@
+# wrangler pages deploy . — exclude source/artifacts from the published site
+# (audit 2026-09-28: fetch_hkdl.py, __pycache__, README.md were live)
+.git
+__pycache__
+*.pyc
+*.py
+*.sh
+README.md
+.assetsignore
